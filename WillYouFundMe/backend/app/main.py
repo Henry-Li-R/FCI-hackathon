@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Municipal Proposal Copilot")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:1420"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

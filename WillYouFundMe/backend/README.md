@@ -36,7 +36,7 @@ The script chunks the corpus with LangChain's `RecursiveCharacterTextSplitter`, 
 uvicorn app.main:app --reload --port 8000
 ```
 
-CORS is enabled for `http://localhost:5173` by default.
+CORS is enabled for `http://localhost:1420` by default.
 
 ## Endpoints
 
