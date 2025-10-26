@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import os
 import logging
-from typing import List, Optional, Tuple
+import re
+from typing import List, Optional, Tuple, Any
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
 
-from .models import Grant, Profile, SectionRequest, SectionSpec, ValidationIssue, Volume
+from .models import Grant, Profile, SectionRequest, SectionSpec, ValidationIssue, Volume, SectionType
 from .rag import format_citations, retrieve_chunks
 from .validation import validate_volume
 
@@ -32,7 +33,7 @@ def get_llm() -> ChatOpenAI:
 
 SECTION_JSON_SCHEMA = (
     '{"volume": {"id": "", "title": "", "type": "narrative|bullets|table", '
-    '"body": null, "items": null, "rows": null}, "rationale": ""}'
+    '"body": null, "items": null, "rows": [{"item": "", "cost": 0.0}]}, "rationale": ""}'
 )
 
 
@@ -51,6 +52,8 @@ def build_prompt(section_spec: SectionSpec, grant: Grant) -> ChatPromptTemplate:
         "Retrieved Evidence:\n{context}\n"
         "Return JSON with keys volume and rationale. Volume must include id, title, type and"
         " the fields required for that type (body for narratives, items for bullets, rows for tables)."
+        " For table sections, rows must be a list of objects with 'item' and numeric 'cost' fields suitable"
+        " for calculations (no currency symbols)."
         " Keep narratives within the word cap and cite evidence inline using bracketed numbers"
         " referencing the provided context indices."
     )
@@ -86,6 +89,77 @@ def _extract_json_blob(raw_text: str) -> str:
     return cleaned
 
 
+_HEADER_TOKENS = {"item", "description", "cost", "amount", "justification", "notes"}
+
+
+def _coerce_cost(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    cleaned = re.sub(r"\[[^\]]*\]", "", cleaned)
+    cleaned = cleaned.replace(",", "")
+    cleaned = re.sub(r"[^0-9.\-]", "", cleaned)
+    if not cleaned or cleaned in {"-", ".", "-.", ".-"}:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _normalize_volume_payload(volume_payload: dict[str, Any]) -> dict[str, Any]:
+    if volume_payload.get("type") != SectionType.table:
+        return volume_payload
+
+    rows = volume_payload.get("rows")
+    if not isinstance(rows, list):
+        return volume_payload
+
+    normalized = []
+    for entry in rows:
+        item: Optional[str] = None
+        cost_value: Optional[float] = None
+
+        if isinstance(entry, dict):
+            item = entry.get("item") or entry.get("Item")
+            raw_cost = entry.get("cost") or entry.get("Cost")
+            cost_value = _coerce_cost(raw_cost)
+        elif isinstance(entry, (list, tuple)):
+            if not entry:
+                continue
+            tokenized = [str(cell).strip().lower() for cell in entry if isinstance(cell, str)]
+            if tokenized and all(token in _HEADER_TOKENS for token in tokenized):
+                continue
+            item = str(entry[0]).strip()
+            for cell in reversed(entry[1:]):
+                cost_value = _coerce_cost(cell)
+                if cost_value is not None:
+                    break
+        else:
+            continue
+
+        if not item:
+            continue
+
+        if item.strip().lower().startswith("total") and normalized:
+            # Skip total rows to avoid double-counting sums.
+            continue
+
+        if cost_value is None:
+            continue
+
+        normalized.append({"item": item, "cost": cost_value})
+
+    if normalized:
+        volume_payload = {**volume_payload, "rows": normalized}
+
+    return volume_payload
+
+
 def parse_volume(raw_text: str) -> Volume:
     payload = _extract_json_blob(raw_text)
     try:
@@ -93,7 +167,7 @@ def parse_volume(raw_text: str) -> Volume:
     except json.JSONDecodeError as exc:
         logger.error("Failed to parse LLM response as JSON: %s", raw_text)
         raise ValueError("LLM response was not valid JSON") from exc
-    volume_payload = data.get("volume", {})
+    volume_payload = _normalize_volume_payload(data.get("volume", {}))
     return Volume(**volume_payload)
 
 
