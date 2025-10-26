@@ -109,7 +109,15 @@ class ProposalResponse(BaseModel):
 
 class BuildIndexRequest(BaseModel):
     corpus_path: Path = Field(default=Path("corpus"))
-    index_path: Path = Field(default=Path("faiss_index"))
+    index_path: Path = Field(default=Path("app/faiss_index"))
     chunk_size: int = 600
     chunk_overlap: int = 120
+
+
+class IndexStatus(BaseModel):
+    index_path: Path
+    corpus_path: Path
+    exists: bool
+    documents_indexed: Optional[int] = None
+    chunks_indexed: Optional[int] = None
 
