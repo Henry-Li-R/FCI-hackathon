@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from typing import List, Optional, Tuple
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -11,6 +12,9 @@ from langchain_core.documents import Document
 from .models import Grant, Profile, SectionRequest, SectionSpec, ValidationIssue, Volume
 from .rag import format_citations, retrieve_chunks
 from .validation import validate_volume
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_llm() -> ChatOpenAI:
@@ -66,10 +70,28 @@ def render_context(documents: List[Document]) -> str:
     return "\n".join(parts)
 
 
+def _extract_json_blob(raw_text: str) -> str:
+    """Return a best-effort JSON string from an LLM response."""
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        parts = cleaned.split("```", 2)
+        if len(parts) >= 3:
+            # The middle segment is the fenced content, possibly prefixed with a language tag
+            candidate = parts[1]
+            if "\n" in candidate:
+                _, content = candidate.split("\n", 1)
+            else:
+                content = candidate
+            return content.strip()
+    return cleaned
+
+
 def parse_volume(raw_text: str) -> Volume:
+    payload = _extract_json_blob(raw_text)
     try:
-        data = json.loads(raw_text)
+        data = json.loads(payload)
     except json.JSONDecodeError as exc:
+        logger.error("Failed to parse LLM response as JSON: %s", raw_text)
         raise ValueError("LLM response was not valid JSON") from exc
     volume_payload = data.get("volume", {})
     return Volume(**volume_payload)
