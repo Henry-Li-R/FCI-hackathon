@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import List
 
 from fastapi import FastAPI, HTTPException
@@ -25,6 +26,16 @@ from .session import SessionStore
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Municipal Proposal Copilot")
+
+default_origins = ["http://localhost:1420", "http://localhost:5173"]
+configured_origins = os.getenv("ALLOWED_ORIGINS")
+if configured_origins:
+    origins = [origin.strip() for origin in configured_origins.split(",") if origin.strip()]
+    if not origins:
+        origins = default_origins
+else:
+    origins = default_origins
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
