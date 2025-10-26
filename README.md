@@ -1,6 +1,15 @@
 # Municipal Proposal Copilot Backend
 
-This FastAPI service drafts structured municipal grant proposal sections using LangChain, DeepSeek, and a FAISS-backed retrieval system. It maintains lightweight session state and exposes endpoints for collecting intake profiles, generating individual sections, and assembling complete proposals.
+Municipal Proposal Copilot is a digital assistant designed to help city and county teams tell their story when applying for infrastructure grants. Instead of starting from a blank page, staff can describe their community and funding goals, and the service suggests polished language for each section of a proposal. It keeps track of local priorities, pulls in helpful reference materials, and assembles everything into a coherent draft that can be reviewed and customized by humans.
+
+## What it does
+
+- Guides staff through sharing community background information in plain language.
+- Drafts proposal sections such as executive summaries, problem statements, budgets, and more.
+- Suggests evidence-based talking points by referencing a curated library of guidance documents.
+- Keeps a running record of what has been generated so teams can revisit and revise their drafts together.
+
+The rest of this README is aimed at developers and technical operators who want to run or extend the service.
 
 ## Requirements
 
