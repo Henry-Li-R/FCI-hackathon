@@ -171,58 +171,152 @@ def parse_volume(raw_text: str) -> Volume:
     return Volume(**volume_payload)
 
 
+# def generate_section_payload(
+#     request: SectionRequest,
+#     profile: Optional[Profile],
+#     llm: Optional[ChatOpenAI] = None,
+# ) -> Tuple[Volume, List[dict], ValidationIssue]:
+#     documents = retrieve_chunks(request.query)
+#     citations = format_citations(documents)
+#     context = render_context(documents)
+
+#     prompt = build_prompt(request.section_spec, request.grant)
+#     llm = llm or get_llm()
+#     chain = prompt | llm
+#     response = chain.invoke(
+#         {
+#             "grant_title": request.grant.title,
+#             "grant_sponsor": request.grant.sponsor,
+#             "criteria": "; ".join(request.grant.criteria),
+#             "section_id": request.section_spec.id,
+#             "section_title": request.section_spec.title,
+#             "section_type": request.section_spec.type.value,
+#             "word_max": request.section_spec.word_max or "none",
+#             "required_terms": ", ".join(request.section_spec.required_terms or []),
+#             "profile": profile.dict() if profile else {},
+#             "query": request.query,
+#             "context": context,
+#         }
+#     )
+#     volume = parse_volume(response.content)
+#     validation = validate_volume(volume, request.section_spec, request.grant)
+
+#     if not validation.passed:
+#         revision_prompt = ChatPromptTemplate.from_messages(
+#             [
+#                 (
+#                     "system",
+#                     "Revise the JSON to resolve the validation issues. Return JSON with the same schema.",
+#                 ),
+#                 (
+#                     "human",
+#                     "Previous JSON: {previous}. Issues: {issues}. Section type: {section_type}. Word cap: {word_cap}.",
+#                 ),
+#             ]
+#         )
+#         revision_chain = revision_prompt | llm
+#         revision = revision_chain.invoke(
+#             {
+#                 "previous": volume.dict(),
+#                 "issues": "; ".join(validation.issues),
+#                 "section_type": request.section_spec.type.value,
+#                 "word_cap": request.section_spec.word_max or "none",
+#             }
+#         )
+#         try:
+#             revised_data = json.loads(revision.content)
+#             if "volume" in revised_data:
+#                 volume = Volume(**revised_data["volume"])
+#                 validation = validate_volume(volume, request.section_spec, request.grant)
+#         except Exception:
+#             pass
+
+#     return volume, citations, validation
+
 def generate_section_payload(
     request: SectionRequest,
     profile: Optional[Profile],
     llm: Optional[ChatOpenAI] = None,
 ) -> Tuple[Volume, List[dict], ValidationIssue]:
+    """
+    Generates one proposal section (one of the six auto-generated fields)
+    using retrieved context and the LLM.
+    """
+    # Retrieve relevant text for this section
     documents = retrieve_chunks(request.query)
     citations = format_citations(documents)
     context = render_context(documents)
 
-    prompt = build_prompt(request.section_spec, request.grant)
+    # Build a concise instruction for the model
+    prompt = ChatPromptTemplate.from_messages([
+        ("system",
+        "You are an assistant that writes proposal sections for Nunavut communities. "
+        "Respond ONLY in JSON following this schema:\n"
+        "{{"
+        "\"volume\": {{"
+        "  \"id\": \"string\","
+        "  \"title\": \"string\","
+        "  \"type\": \"narrative\","
+        "  \"body\": \"string\""
+        "}}"
+        "}}\n"
+        "Do not include explanations or extra text."),
+        ("human",
+        "Grant: {grant_title} ({grant_sponsor})\n"
+        "Criteria: {criteria}\n\n"
+        "Community profile: {profile}\n\n"
+        "Section: {section_title}\n"
+        "Section type: {section_type}\n"
+        "Word limit: {word_max}\n\n"
+        "Query: {query}\n"
+        "Context:\n{context}")
+    ])
+
+
     llm = llm or get_llm()
     chain = prompt | llm
-    response = chain.invoke(
-        {
-            "grant_title": request.grant.title,
-            "grant_sponsor": request.grant.sponsor,
-            "criteria": "; ".join(request.grant.criteria),
-            "section_id": request.section_spec.id,
-            "section_title": request.section_spec.title,
-            "section_type": request.section_spec.type.value,
-            "word_max": request.section_spec.word_max or "none",
-            "required_terms": ", ".join(request.section_spec.required_terms or []),
-            "profile": profile.dict() if profile else {},
-            "query": request.query,
-            "context": context,
-        }
-    )
+
+    # Send everything to the model
+    response = chain.invoke({
+        "grant_title": request.grant.title,
+        "grant_sponsor": request.grant.sponsor,
+        "criteria": "; ".join(request.grant.criteria),
+        "section_title": request.section_spec.title,
+        "section_type": request.section_spec.type.value,
+        "word_max": request.section_spec.word_max or "none",
+        "profile": profile.dict() if profile else {},
+        "query": request.query,
+        "context": context,
+    })
+
+    try:
+        volume = parse_volume(response.content)
+    except Exception:
+        volume = Volume(
+            id=request.section_spec.id,
+            title=request.section_spec.title,
+            type=request.section_spec.type,
+            body=response.content.strip()
+        )
+
+
+    # Parse and validate
     volume = parse_volume(response.content)
     validation = validate_volume(volume, request.section_spec, request.grant)
 
     if not validation.passed:
-        revision_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "Revise the JSON to resolve the validation issues. Return JSON with the same schema.",
-                ),
-                (
-                    "human",
-                    "Previous JSON: {previous}. Issues: {issues}. Section type: {section_type}. Word cap: {word_cap}.",
-                ),
-            ]
-        )
+        revision_prompt = ChatPromptTemplate.from_messages([
+            ("system", "Revise the JSON to resolve the validation issues."),
+            ("human",
+             "Previous JSON: {previous}\nIssues: {issues}\nSection type: {section_type}\nWord cap: {word_cap}")
+        ])
         revision_chain = revision_prompt | llm
-        revision = revision_chain.invoke(
-            {
-                "previous": volume.dict(),
-                "issues": "; ".join(validation.issues),
-                "section_type": request.section_spec.type.value,
-                "word_cap": request.section_spec.word_max or "none",
-            }
-        )
+        revision = revision_chain.invoke({
+            "previous": volume.dict(),
+            "issues": "; ".join(validation.issues),
+            "section_type": request.section_spec.type.value,
+            "word_cap": request.section_spec.word_max or "none",
+        })
         try:
             revised_data = json.loads(revision.content)
             if "volume" in revised_data:
@@ -232,4 +326,3 @@ def generate_section_payload(
             pass
 
     return volume, citations, validation
-

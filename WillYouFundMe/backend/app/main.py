@@ -6,6 +6,10 @@ from typing import List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from dotenv import load_dotenv
+load_dotenv()
+
+
 from .generation import generate_section_payload, get_llm
 from .models import (
     IntakeRequest,
@@ -23,7 +27,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Municipal Proposal Copilot")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:1420"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
