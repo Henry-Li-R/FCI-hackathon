@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import logo from "./assets/logo.png";
-import heroIllustration from "./assets/react.svg";
+import heroIllustration from "./assets/logo.png";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -168,16 +168,12 @@ function Header() {
       <div className="flex items-center gap-4">
         <img src={logo} alt="Will You Fund Me logo" className="h-16 w-16 rounded-full border border-white/20 object-cover" />
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-blue-400/80">Nunavut Innovation Lab</p>
           <h1 className="text-3xl font-bold text-white sm:text-4xl">Will You Fund Me?</h1>
           <p className="text-sm text-slate-300">Craft compelling funding proposals with local insight.</p>
         </div>
       </div>
 
       <nav className="flex flex-wrap items-center gap-4 text-sm font-medium text-slate-300">
-        <a className="rounded-full border border-white/10 px-4 py-2 transition hover:border-blue-500 hover:text-white" href="#instructions">
-          About
-        </a>
         <a className="rounded-full border border-white/10 px-4 py-2 transition hover:border-blue-500 hover:text-white" href="#instructions">
           Instructions
         </a>
