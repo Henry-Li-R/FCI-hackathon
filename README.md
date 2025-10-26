@@ -21,3 +21,12 @@ source ~/.bashrc
 # install and use a modern Node version
 nvm install 22
 nvm use 22
+
+# backend
+python3 -m venv venv
+source venv/bin/activate
+
+pip install fastapi uvicorn requests
+
+# to run backend
+uvicorn backend.app:app --host 127.0.0.1 --port 8000
