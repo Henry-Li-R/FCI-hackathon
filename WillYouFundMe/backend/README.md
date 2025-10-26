@@ -22,13 +22,16 @@ pip install -r requirements.txt
 
 ### Build the Retrieval Index
 
-Populate the `corpus/` directory with `.txt` files, then run:
+The API now builds the FAISS retrieval index automatically on startup using the `.txt` files in `backend/corpus/`. If you need to trigger a rebuild manually (for example after updating the corpus) you can either:
 
-```bash
-python scripts/build_index.py --corpus corpus --index app/faiss_index
-```
+- Call the `POST /index/rebuild` endpoint (documented below), or
+- Run the helper script:
 
-The script chunks the corpus with LangChain's `RecursiveCharacterTextSplitter`, embeds passages with `sentence-transformers/all-MiniLM-L6-v2`, and writes a FAISS index to `app/faiss_index/`.
+  ```bash
+  python scripts/build_index.py --corpus corpus --index app/faiss_index
+  ```
+
+The rebuild process chunks the corpus with LangChain's `RecursiveCharacterTextSplitter`, embeds passages with `sentence-transformers/all-MiniLM-L6-v2`, and writes a FAISS index to `app/faiss_index/`.
 
 ## Running the API
 
@@ -38,7 +41,78 @@ uvicorn app.main:app --reload --port 8000
 
 CORS is enabled for `http://localhost:1420` by default.
 
+## Quickstart Workflow
+
+Once the server is running you can walk through the entire proposal drafting flow with a handful of HTTP requests. The snippets below use `curl`, but any REST client will work.
+
+1. **Check the retrieval index (optional):**
+
+   ```bash
+   curl http://localhost:8000/index/status
+   ```
+
+2. **Upload or update the community profile:**
+
+   ```bash
+   curl -X POST http://localhost:8000/intake_profile \
+     -H "Content-Type: application/json" \
+     -d @intake.json
+   ```
+
+   Save the payload shown in the [endpoint reference](#post-intake_profile) as `intake.json` or craft your own.
+
+3. **Draft an individual section:**
+
+   ```bash
+   curl -X POST http://localhost:8000/sections/complete \
+     -H "Content-Type: application/json" \
+     -d @section.json
+   ```
+
+4. **Generate a full proposal in one request:**
+
+   ```bash
+   curl -X POST http://localhost:8000/proposal/complete \
+     -H "Content-Type: application/json" \
+     -d @proposal.json
+   ```
+
+5. **Inspect the stored session state:**
+
+   ```bash
+   curl http://localhost:8000/session/demo-session
+   ```
+
+If you add new `.txt` source documents later, call `POST /index/rebuild` to refresh the retrieval index before generating more content.
+
 ## Endpoints
+
+### `GET /index/status`
+Returns metadata describing the currently configured FAISS index.
+
+**Response**
+```json
+{
+  "index_path": ".../backend/app/faiss_index",
+  "corpus_path": ".../backend/corpus",
+  "exists": true,
+  "documents_indexed": 4,
+  "chunks_indexed": 256
+}
+```
+
+### `POST /index/rebuild`
+Rebuilds the FAISS index. Provide optional overrides if your corpus or index are stored in non-default locations.
+
+**Request**
+```json
+{
+  "corpus_path": "corpus",
+  "index_path": "app/faiss_index",
+  "chunk_size": 600,
+  "chunk_overlap": 120
+}
+```
 
 ### `POST /intake_profile`
 Stores or replaces the profile for a session and clears previous outputs.
@@ -138,8 +212,9 @@ Returns the persisted session state, including the stored profile and any last g
 
 1. POST an intake profile.
 2. Build the FAISS index (`python scripts/build_index.py --corpus corpus --index app/faiss_index`).
-3. Generate individual sections with `/sections/complete` or a full proposal via `/proposal/complete`.
-4. Use `/session/{id}` to inspect the stored profile and latest proposal payload for debugging.
+3. (Optional) Check `/index/status` to confirm that the retrieval index is ready. If you add new corpus documents later, call `/index/rebuild` to refresh it.
+4. Generate individual sections with `/sections/complete` or a full proposal via `/proposal/complete`.
+5. Use `/session/{id}` to inspect the stored profile and latest proposal payload for debugging.
 
 The service validates narrative lengths, required grant term usage, bullet counts, and budget contingency requirements. Failed validations trigger one automatic revision attempt before returning issues to the client.
 

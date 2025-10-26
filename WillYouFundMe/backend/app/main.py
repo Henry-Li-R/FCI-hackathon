@@ -4,7 +4,7 @@ import logging
 import os
 from typing import List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from dotenv import load_dotenv
@@ -12,7 +12,11 @@ load_dotenv()
 
 
 from .generation import generate_section_payload, get_llm
+from .indexing import build_index as build_faiss_index
+from .indexing import describe_index, ensure_index
 from .models import (
+    BuildIndexRequest,
+    IndexStatus,
     IntakeRequest,
     Proposal,
     ProposalRequest,
@@ -45,6 +49,34 @@ app.add_middleware(
 )
 
 sessions = SessionStore()
+
+
+@app.on_event("startup")
+def prepare_index() -> None:
+    try:
+        ensure_index()
+    except FileNotFoundError as exc:
+        logger.warning("Automatic FAISS index build skipped: %s", exc)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("Unexpected error while preparing FAISS index: %s", exc)
+
+
+@app.get("/index/status", response_model=IndexStatus)
+def index_status() -> IndexStatus:
+    return describe_index()
+
+
+@app.post("/index/rebuild", response_model=IndexStatus, status_code=status.HTTP_202_ACCEPTED)
+def rebuild_index(payload: BuildIndexRequest) -> IndexStatus:
+    try:
+        return build_faiss_index(payload)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("Failed to rebuild FAISS index: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to rebuild FAISS index") from exc
 
 
 @app.post("/intake_profile")
