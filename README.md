@@ -30,3 +30,6 @@ pip install fastapi uvicorn requests
 
 # to run backend
 uvicorn backend.app:app --host 127.0.0.1 --port 8000
+
+# in order to run tauri-cli for rust (linux): 
+cargo install tauri-cli
