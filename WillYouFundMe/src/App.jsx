@@ -1,15 +1,162 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import logo from "./assets/logo.png";
 import heroIllustration from "./assets/react.svg";
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
+
+const PROPOSAL_SECTIONS = [
+  { id: "overview", title: "Project Overview", type: "narrative", word_max: 200 },
+  { id: "impact", title: "Community Impact", type: "narrative", word_max: 220 },
+  { id: "budget", title: "Budget Overview", type: "table" },
+  { id: "timeline", title: "Timeline & Milestones", type: "bullets" },
+];
+
+const parseListInput = (value = "") =>
+  value
+    .split(/\r?\n|,/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
 function App() {
+  const [proposal, setProposal] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const sessionIdRef = useRef("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      sessionIdRef.current = `session-${Date.now()}`;
+      return;
+    }
+
+    let stored = window.localStorage.getItem("wyfm-session-id");
+    if (!stored) {
+      const generated = window.crypto?.randomUUID?.() || `session-${Date.now()}`;
+      window.localStorage.setItem("wyfm-session-id", generated);
+      stored = generated;
+    }
+    sessionIdRef.current = stored;
+  }, []);
+
+  const ensureSessionId = () => {
+    if (sessionIdRef.current) {
+      return sessionIdRef.current;
+    }
+    const fallback = `session-${Date.now()}`;
+    sessionIdRef.current = fallback;
+    return fallback;
+  };
+
+  const postJson = async (endpoint, payload) => {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      let message = `Request failed with status ${response.status}`;
+      try {
+        const errorBody = await response.json();
+        if (errorBody?.detail) {
+          message =
+            typeof errorBody.detail === "string"
+              ? errorBody.detail
+              : JSON.stringify(errorBody.detail);
+        }
+      } catch (parseError) {
+        // Ignore JSON parsing errors and fall back to the default message
+      }
+      throw new Error(message);
+    }
+
+    return response.json();
+  };
+
+  const handleGenerateProposal = async (formData) => {
+    const sessionId = ensureSessionId();
+    const objectiveList = parseListInput(formData.objectives);
+    const budgetValue = formData.budget ? Number(formData.budget) : undefined;
+    const timelineValue = formData.timeline ? Number(formData.timeline) : undefined;
+
+    const baselineMetrics = {};
+    if (Number.isFinite(budgetValue)) {
+      baselineMetrics.estimated_budget = budgetValue;
+    }
+    if (Number.isFinite(timelineValue)) {
+      baselineMetrics.timeline_months = timelineValue;
+    }
+
+    const profilePayload = {
+      name:
+        formData.communityName?.trim() ||
+        formData.projectName?.trim() ||
+        "Community Partner",
+      priorities: objectiveList,
+      notes: formData.description?.trim() || undefined,
+    };
+
+    if (Object.keys(baselineMetrics).length > 0) {
+      profilePayload.baseline_metrics = baselineMetrics;
+    }
+
+    const grantPayload = {
+      title: formData.fundingCall?.trim() || formData.projectName?.trim() || "Funding Proposal",
+      sponsor: formData.communityName?.trim() || "Local Sponsor",
+      criteria: objectiveList,
+    };
+
+    if (Number.isFinite(budgetValue)) {
+      grantPayload.max_amount = budgetValue;
+    }
+
+    const querySegments = [
+      formData.projectName && `Project Name: ${formData.projectName}`,
+      formData.communityName && `Community: ${formData.communityName}`,
+      formData.fundingCall && `Funding Call: ${formData.fundingCall}`,
+      formData.objectives && `Objectives: ${formData.objectives}`,
+      formData.description && `Project Description: ${formData.description}`,
+      formData.budget && `Estimated Budget: ${formData.budget} CAD`,
+      formData.timeline && `Timeline: ${formData.timeline} months`,
+    ].filter(Boolean);
+
+    const query = querySegments.length
+      ? querySegments.join("\n")
+      : `Generate a project proposal outline for ${profilePayload.name}.`;
+
+    setIsLoading(true);
+    setError(null);
+    setProposal(null);
+
+    try {
+      await postJson("/intake_profile", { session_id: sessionId, profile: profilePayload });
+      const proposalResponse = await postJson("/proposal/complete", {
+        session_id: sessionId,
+        query,
+        volume_list: PROPOSAL_SECTIONS,
+        grant: grantPayload,
+      });
+      setProposal(proposalResponse);
+    } catch (requestError) {
+      console.error(requestError);
+      setError(requestError instanceof Error ? requestError.message : "Failed to generate proposal");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-10 sm:px-6 lg:px-8">
         <Header />
         <Hero />
         <Instructions />
-        <Body />
+        <Body
+          onGenerate={handleGenerateProposal}
+          isLoading={isLoading}
+          proposal={proposal}
+          error={error}
+        />
       </div>
     </main>
   );
@@ -112,7 +259,7 @@ function Instructions() {
   );
 }
 
-function ProposalForm() {
+function ProposalForm({ onGenerate, isLoading }) {
   const [formData, setFormData] = useState({
     projectName: "",
     communityName: "",
@@ -130,7 +277,11 @@ function ProposalForm() {
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    console.log("Form submitted:", formData);
+    const sanitizedEntries = Object.entries(formData).map(([key, value]) => [
+      key,
+      typeof value === "string" ? value.trim() : value,
+    ]);
+    onGenerate(Object.fromEntries(sanitizedEntries));
   };
 
   return (
@@ -250,18 +401,114 @@ function ProposalForm() {
 
         <button
           type="submit"
-          className="w-full rounded-full bg-blue-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition hover:bg-blue-400"
+          disabled={isLoading}
+          className="w-full rounded-full bg-blue-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:bg-blue-500/60"
         >
-          Generate proposal draft
+          {isLoading ? "Generating..." : "Generate proposal draft"}
         </button>
       </form>
     </div>
   );
 }
 
-function ProposalPreview() {
-  return (
-    <div className="flex h-full flex-col justify-between rounded-3xl border border-white/10 bg-gradient-to-b from-white/10 via-slate-900/60 to-slate-950 p-8 text-left shadow-inner">
+function ProposalPreview({ proposal, isLoading, error }) {
+  const currencyFormatter = new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: "CAD",
+    maximumFractionDigits: 0,
+  });
+
+  const renderVolumeContent = (volume) => {
+    if (volume.type === "narrative") {
+      return <p className="whitespace-pre-line text-sm leading-relaxed text-slate-200">{volume.body}</p>;
+    }
+
+    if (volume.type === "bullets") {
+      return (
+        <ul className="ml-4 list-disc space-y-2 text-sm text-slate-200">
+          {(volume.items || []).map((item, index) => (
+            <li key={`${volume.id}-item-${index}`}>{item}</li>
+          ))}
+        </ul>
+      );
+    }
+
+    if (volume.type === "table") {
+      return (
+        <div className="overflow-hidden rounded-xl border border-white/10">
+          <table className="min-w-full divide-y divide-white/10 text-sm text-slate-200">
+            <thead className="bg-white/5 text-left uppercase tracking-widest text-xs text-slate-300">
+              <tr>
+                <th className="px-4 py-3 font-semibold">Item</th>
+                <th className="px-4 py-3 font-semibold">Estimated Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(volume.rows || []).map((row, index) => (
+                <tr key={`${volume.id}-row-${index}`} className="odd:bg-slate-900/60 even:bg-slate-900/30">
+                  <td className="px-4 py-3 align-top">{row.item}</td>
+                  <td className="px-4 py-3 align-top text-right font-medium text-blue-200">
+                    {typeof row.cost === "number" ? currencyFormatter.format(row.cost) : row.cost}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  const renderCitations = (citations, volumeId) => {
+    if (!citations?.length) {
+      return null;
+    }
+
+    return (
+      <div className="mt-4 rounded-xl border border-white/10 bg-slate-900/60 p-4 text-xs text-slate-300">
+        <p className="font-semibold text-slate-100">Sources</p>
+        <ul className="mt-2 space-y-1">
+          {citations.map((citation, index) => (
+            <li key={`${volumeId}-citation-${index}`} className="leading-snug">
+              <span className="text-blue-200">[{index + 1}] {citation.source}</span>
+              {citation.snippet ? <span className="text-slate-400"> — {citation.snippet}</span> : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
+
+  const renderValidation = (validation, volumeId) => {
+    if (!validation) {
+      return null;
+    }
+
+    const baseClasses = "mt-4 rounded-xl border px-4 py-3 text-xs";
+    const stateClasses = validation.passed
+      ? "border-emerald-500/40 text-emerald-200"
+      : "border-amber-500/40 text-amber-200";
+
+    return (
+      <div className={`${baseClasses} ${stateClasses}`}>
+        <p className="font-semibold">
+          {validation.passed ? "Validation passed" : "Needs attention"}
+        </p>
+        {!validation.passed && validation.issues?.length ? (
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-amber-100">
+            {validation.issues.map((issue, index) => (
+              <li key={`${volumeId}-issue-${index}`}>{issue}</li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    );
+  };
+
+  let content = (
+    <>
       <div className="space-y-4">
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-blue-200/80">Live Preview</p>
         <h3 className="text-2xl font-semibold text-white">Your proposal draft will appear here</h3>
@@ -280,15 +527,72 @@ function ProposalPreview() {
           <li>Timeline &amp; milestones</li>
         </ul>
       </div>
+    </>
+  );
+
+  if (isLoading) {
+    content = (
+      <div className="flex flex-1 flex-col items-center justify-center text-center">
+        <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-500/40 border-t-blue-400" aria-hidden />
+        <p className="mt-6 text-sm font-medium text-slate-200">Generating your tailored proposal draft…</p>
+        <p className="mt-2 text-xs text-slate-400">This usually takes a few seconds.</p>
+      </div>
+    );
+  } else if (error) {
+    content = (
+      <div className="flex flex-1 flex-col justify-center">
+        <p className="text-sm font-semibold text-rose-200">We couldn’t complete the request.</p>
+        <p className="mt-2 text-sm text-rose-100/80">{error}</p>
+        <p className="mt-4 text-xs text-slate-400">Please adjust your inputs or try again shortly.</p>
+      </div>
+    );
+  } else if (proposal) {
+    const sections = Array.isArray(proposal.volumes) ? proposal.volumes : [];
+    content = (
+      <div className="flex h-full flex-col">
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-blue-200/80">Live Preview</p>
+          <h3 className="text-2xl font-semibold text-white">{proposal.title || "Generated Proposal"}</h3>
+          <p className="text-sm text-slate-300">These sections were generated using local guidance and retrieval-augmented context.</p>
+        </div>
+
+        <div className="mt-6 space-y-6 overflow-y-auto pr-1 text-left">
+          {sections.length ? (
+            sections.map((section) => (
+              <div key={section.volume.id} className="rounded-2xl border border-white/10 bg-slate-900/70 p-6 shadow-inner">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h4 className="text-lg font-semibold text-white">{section.volume.title}</h4>
+                  <span className="rounded-full border border-white/10 px-3 py-1 text-xs uppercase tracking-widest text-slate-300">
+                    {section.volume.type}
+                  </span>
+                </div>
+                <div className="mt-4 space-y-4">
+                  {renderVolumeContent(section.volume)}
+                  {renderCitations(section.citations, section.volume.id)}
+                  {renderValidation(section.validation, section.volume.id)}
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-slate-300">No sections were returned for this proposal. Try refining your inputs and generate again.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col justify-between rounded-3xl border border-white/10 bg-gradient-to-b from-white/10 via-slate-900/60 to-slate-950 p-8 text-left shadow-inner">
+      {content}
     </div>
   );
 }
 
-function Body() {
+function Body({ onGenerate, isLoading, proposal, error }) {
   return (
     <section id="proposal" className="mt-16 grid gap-10 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-      <ProposalForm />
-      <ProposalPreview />
+      <ProposalForm onGenerate={onGenerate} isLoading={isLoading} />
+      <ProposalPreview proposal={proposal} isLoading={isLoading} error={error} />
     </section>
   );
 }
